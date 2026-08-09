@@ -76,14 +76,18 @@ AGENT_MODULE = next(SRC_DIR.glob("*/__init__.py")).parent.name
 EVAL_SET_FILE = DATA_DIR / "template_agent.evalset.json"
 JUDGE_CONFIG_FILE = DATA_DIR / "full_eval_config.json"
 
-# Times each case is run and averaged, per gate. The judge metrics return a binary
-# verdict per run, so at 2 every threshold above 0.5 would demand unanimity and read
-# as more tolerant than it is; 5 gives the average enough resolution for the shipped
-# thresholds to mean what they say. Read that as "four of the five runs that produced
-# a score": ADK drops a run whose metric evaluation errored rather than counting it as
-# a miss. The deterministic gate keeps 2 because exact trajectory matching wants
-# unanimity anyway and ROUGE scores continuously. ADK runs these serially, so the
-# judge gate costs proportionally more wall clock.
+# Times each case is run and averaged, per gate. ADK means the per-invocation scores of
+# every run together, so judge scores land on multiples of 1/(rubrics x num_runs x
+# invocations) and a threshold between two of them silently rounds up to the next
+# achievable score. The gate case is single-turn (one invocation), so what is left to
+# tune here is the run count: 5 puts the shipped thresholds on achievable scores, where
+# 2 would make a single-rubric metric demand unanimity. Read the denominator as "the
+# runs that produced a score": ADK drops a run whose metric evaluation errored rather
+# than counting it as a miss. The deterministic gate keeps 2 because exact trajectory
+# matching wants unanimity anyway and ROUGE-1 is finely spaced (not continuous: its
+# denominator counts the response's tokens, so it shifts per run at token scale). ADK
+# runs these serially, so the judge gate costs proportionally more wall clock.
+# Threshold arithmetic: docs/references/agent-evals.md, "How a judge score is built".
 DETERMINISTIC_NUM_RUNS = 2
 JUDGE_NUM_RUNS = 5
 
