@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 5  # Typical run: <1 min (path filtering). 5 min is generous buffer
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -29,6 +30,10 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - '.github/workflows/ci.yml'
+              # Holds a pin that tests/unit/test_pinned_versions.py asserts against
+              - '.pre-commit-config.yaml'
+            workflows:
+              - '.github/workflows/**'
 
   code-quality:
     needs: changes
@@ -147,31 +152,75 @@ jobs:
       - name: Run deterministic agent evals
         run: uv run pytest tests/eval -m "deterministic"
 
+  # Static analysis of GHA workflow files
+  actionlint:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    name: Workflow Lint (actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # Typical run: <1 min (image pull + lint). 5 min is generous buffer
+    steps:
+      # actionlint reads the repo's git metadata to find the project root
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      # Upstream's published image. Keep the tag in sync with `rev` in
+      # .pre-commit-config.yaml so the hook and this gate agree.
+      # TODO: `-shellcheck=` disables the shellcheck pass over inline `run:` blocks.
+      # The runner ships shellcheck, so the pass is deterministic here; it is off
+      # only because the 59 pre-existing SC2086/SC2129 findings are not yet fixed.
+      # Remove the flag with those findings (#255).
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color -shellcheck=
+
   # Always-runs sentinel for branch protection
   status:
     runs-on: ubuntu-latest
     timeout-minutes: 5  # Typical run: <1 min (status check). 5 min is generous buffer
-    needs: [changes, code-quality, integration, agent-eval]
+    needs: [changes, code-quality, integration, agent-eval, actionlint]
     if: always()
     steps:
+      # The code and workflows filters are independent, so each lane reports on
+      # its own and a failure in either fails the sentinel
       - name: Check required status
         run: |
           if [[ "${{ needs.changes.result }}" != "success" ]]; then
             echo "❌ Changes detection failed (result: ${{ needs.changes.result }})"
             exit 1
-          elif [[ "${{ needs.changes.outputs.code }}" == "true" ]]; then
+          fi
+
+          failed=0
+
+          if [[ "${{ needs.changes.outputs.code }}" == "true" ]]; then
             if [[ "${{ needs.code-quality.result }}" != "success" ]]; then
               echo "❌ Code quality and tests failed"
-              exit 1
+              failed=1
             elif [[ "${{ needs.integration.result }}" != "success" ]]; then
               echo "❌ Integration tests failed"
-              exit 1
+              failed=1
             elif [[ "${{ needs.agent-eval.result }}" != "success" ]]; then
               echo "❌ Agent eval gate failed"
-              exit 1
+              failed=1
             else
               echo "✅ Code quality, tests, integration, and agent evals passed"
             fi
           else
             echo "⏭️ Code quality, tests, integration, and agent evals skipped - no relevant files changed"
           fi
+
+          if [[ "${{ needs.changes.outputs.workflows }}" == "true" ]]; then
+            if [[ "${{ needs.actionlint.result }}" != "success" ]]; then
+              echo "❌ Workflow lint failed"
+              failed=1
+            else
+              echo "✅ Workflow lint passed"
+            fi
+          else
+            echo "⏭️ Workflow lint skipped - no workflow files changed"
+          fi
+
+          exit "${failed}"

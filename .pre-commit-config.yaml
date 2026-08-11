@@ -10,11 +10,19 @@ repos:
       - id: check-yaml
         args: [--unsafe]
       - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
       - id: check-added-large-files
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.11.14
     hooks:
       - id: uv-lock
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      # Mirrors the ci.yml gate; keep the version and the flag in sync with it
+      - id: actionlint
+        args: [-shellcheck=]
   - repo: local
     hooks:
       - id: ruff-format
@@ -36,3 +44,8 @@ repos:
         types: [python]
         pass_filenames: false
         require_serial: true
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt
+        language: system
+        types: [terraform]
